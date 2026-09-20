@@ -1,0 +1,19 @@
+dbt_jev_integration_tests:
+  target: duckdb
+  outputs:
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('DBT_JEV_DUCKDB_PATH', 'target/dbt_jev_integration_tests.duckdb') }}"
+      schema: main
+      threads: "{{ env_var('DBT_JEV_DUCKDB_THREADS', '1') | int }}"
+      plugins:
+        - module: dbt_jev.duckdb_plugin
+    clickhouse:
+      type: clickhouse
+      host: "{{ env_var('DBT_JEV_CLICKHOUSE_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('DBT_JEV_CLICKHOUSE_PORT', '58124') | int }}"
+      user: "{{ env_var('DBT_JEV_CLICKHOUSE_USER', 'dbt') }}"
+      password: "{{ env_var('DBT_ENV_SECRET_CLICKHOUSE_PASSWORD') }}"
+      schema: "{{ env_var('DBT_JEV_CLICKHOUSE_SCHEMA', 'default') }}"
+      secure: false
+      threads: "{{ env_var('DBT_JEV_CLICKHOUSE_THREADS', '1') | int }}"

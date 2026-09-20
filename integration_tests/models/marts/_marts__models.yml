@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: classified_tool_calls
+    description: Tool-call context materialized with its Jev classification label.
+    columns:
+      - name: span_id
+        description: Synthetic identifier for the tool call.
+        data_tests:
+          - unique
+          - not_null
+      - name: failure_type
+        description: Nullable classification returned by Jev.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [expected, unexpected, unknown]
+  - name: tool_failure_summary
+    description: Count of synthetic tool calls by tool and classification label.
+    columns:
+      - name: failure_type
+        description: Classification label returned by Jev.
+        data_tests:
+          - not_null

@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: stg_agent_tool_calls
+    description: Synthetic tool-call records prepared as the text context sent to Jev.
+    columns:
+      - name: span_id
+        description: Synthetic identifier for the tool call.
+        data_tests:
+          - unique
+          - not_null
+      - name: tool_context
+        description: Explicit request and result context presented to the classifier.
+        data_tests:
+          - not_null

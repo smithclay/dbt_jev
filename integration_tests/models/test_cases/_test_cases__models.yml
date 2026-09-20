@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: quoted_and_null
+    description: Regression fixture proving SQL NULL short-circuits without inference.
+    columns:
+      - name: classification
+        description: Expected SQL NULL result.

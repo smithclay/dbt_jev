@@ -1,0 +1,4 @@
+packages:
+  - local: ..
+    name: dbt_jev
+sha1_hash: c787411b652dd5d587210a94ffee257da65a5a49

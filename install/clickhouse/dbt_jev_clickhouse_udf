@@ -1,0 +1,4 @@
+#!/usr/bin/python3
+from dbt_jev.clickhouse_udf import main
+
+raise SystemExit(main())

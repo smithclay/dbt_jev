@@ -1,0 +1,44 @@
+services:
+  mock:
+    image: python:3.12.12-slim-bookworm
+    command: ["python", "/app/tests/mock_service.py", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./tests:/app/tests:ro
+    ports:
+      - "58080:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/_requests')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  clickhouse:
+    build:
+      context: .
+      dockerfile: Dockerfile.clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: dbt
+      CLICKHOUSE_PASSWORD: dbt
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      DBT_JEV_PROVIDER: ${DBT_JEV_PROVIDER:-typesafe}
+      TYPESAFE_API_KEY: mock-key
+      TYPESAFE_BASE_URL: http://mock:8000
+      TYPESAFE_DEFAULT_MODEL: jev-latest
+      OPENROUTER_API_KEY: mock-key
+      OPENROUTER_BASE_URL: http://mock:8000
+      OPENROUTER_MODEL: typesafe/jev-1.13
+      DBT_JEV_BACKOFF_INITIAL: "0"
+      DBT_JEV_BACKOFF_MAX: "0"
+      DBT_JEV_RETRY_BUDGET: "2"
+    ports:
+      - "58123:9000"
+      - "58124:8123"
+    depends_on:
+      mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user dbt --password dbt --query 'select 1'"]
+      interval: 1s
+      timeout: 2s
+      retries: 60

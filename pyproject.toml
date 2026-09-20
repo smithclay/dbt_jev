@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dbt-jev-runtime"
+version = "0.1.0"
+description = "Runtime support for the dbt_jev dbt package"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "typesafe-sdk==0.7.0",
+]
+
+[project.optional-dependencies]
+duckdb = [
+  "dbt-duckdb==1.11.0",
+  "duckdb==1.5.5",
+  "numpy>=1.26",
+]
+clickhouse = [
+  "dbt-clickhouse==1.10.2",
+]
+test = [
+  "dbt-core==1.11.12",
+  "dbt-clickhouse==1.10.2",
+  "dbt-duckdb==1.11.0",
+  "duckdb==1.5.5",
+  "numpy>=1.26",
+  "pytest==8.4.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dbt_jev"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+  "clickhouse: requires the Docker ClickHouse test service",
+  "live: sends synthetic data to the hosted Jev API",
+]

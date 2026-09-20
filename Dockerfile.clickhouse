@@ -1,0 +1,18 @@
+FROM clickhouse/clickhouse-server:26.8
+
+USER root
+
+COPY pyproject.toml README.md LICENSE /tmp/dbt_jev/
+COPY src /tmp/dbt_jev/src
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip \
+    && pip3 install --no-cache-dir /tmp/dbt_jev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/dbt_jev
+
+COPY install/clickhouse/dbt_jev_function.xml /etc/clickhouse-server/dbt_jev_function.xml
+COPY install/clickhouse/dbt_jev_clickhouse_udf /var/lib/clickhouse/user_scripts/dbt_jev_clickhouse_udf
+
+RUN chmod 0755 /var/lib/clickhouse/user_scripts/dbt_jev_clickhouse_udf \
+    && chown clickhouse:clickhouse /var/lib/clickhouse/user_scripts/dbt_jev_clickhouse_udf
