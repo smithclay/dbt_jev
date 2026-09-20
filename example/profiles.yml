@@ -1,0 +1,19 @@
+dbt_jev_example:
+  target: duckdb
+  outputs:
+    duckdb:
+      type: duckdb
+      path: target/dbt_jev_example.duckdb
+      schema: main
+      threads: 1
+      plugins:
+        - module: dbt_jev.duckdb_plugin
+    clickhouse:
+      type: clickhouse
+      host: "{{ env_var('DBT_JEV_CLICKHOUSE_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('DBT_JEV_CLICKHOUSE_PORT', '58124') | int }}"
+      user: dbt
+      password: "{{ env_var('DBT_ENV_SECRET_CLICKHOUSE_PASSWORD') }}"
+      schema: default
+      secure: false
+      threads: 1

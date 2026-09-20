@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: classified_calls
+    columns:
+      - name: span_id
+        data_tests:
+          - unique
+          - not_null
+      - name: failure_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [expected, unexpected, unknown]
+  - name: failure_summary
+    columns:
+      - name: failure_type
+        data_tests:
+          - not_null
+

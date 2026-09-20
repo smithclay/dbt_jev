@@ -1,0 +1,5 @@
+span_id,tool_name,request_summary,result_summary
+span-001,file_lookup,Look for optional project instructions,No file found; exploration continued normally
+span-002,external_api,Fetch customer status,Authentication failure: HTTP 401
+span-003,http_client,Fetch a successful API response,Response succeeded but a tool parsing error followed
+span-004,file_lookup,Look up café/雪 path,Result was ambiguous and couldn't establish what happened
