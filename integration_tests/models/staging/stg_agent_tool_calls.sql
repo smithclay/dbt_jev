@@ -1,5 +1,3 @@
-{{ config(materialized='table') }}
-
 select
     span_id,
     tool_name,
@@ -9,4 +7,3 @@ select
         '; result=', result_summary
     ) as tool_context
 from {{ ref('agent_tool_calls') }}
-

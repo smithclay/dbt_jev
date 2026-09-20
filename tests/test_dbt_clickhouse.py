@@ -29,8 +29,8 @@ def _http_json(url: str, *, method: str = "GET"):
 
 
 def _project(tmp_path: Path) -> Path:
-    project = tmp_path / "example"
-    shutil.copytree(ROOT / "example", project)
+    project = tmp_path / "integration_tests"
+    shutil.copytree(ROOT / "integration_tests", project)
     (project / "packages.yml").write_text(
         f"packages:\n  - local: {ROOT.as_posix()}\n", encoding="utf-8"
     )
@@ -93,11 +93,11 @@ def test_duckdb_and_clickhouse_send_and_materialise_the_same_values(tmp_path):
     _dbt(project, env, "duckdb", "run")
     duckdb_requests = _normalised_requests(mock_url)
     with duckdb.connect(
-        str(project / "target" / "dbt_jev_example.duckdb"), read_only=True
+        str(project / "target" / "dbt_jev_integration_tests.duckdb"), read_only=True
     ) as connection:
         duckdb_rows = dict(
             connection.execute(
-                "select span_id, failure_type from classified_calls order by span_id"
+                "select span_id, failure_type from classified_tool_calls order by span_id"
             ).fetchall()
         )
         duckdb_null_result = connection.execute(
@@ -133,7 +133,7 @@ def test_duckdb_and_clickhouse_send_and_materialise_the_same_values(tmp_path):
     try:
         rows = dict(
             client.query(
-                "select span_id, failure_type from classified_calls order by span_id"
+                "select span_id, failure_type from classified_tool_calls order by span_id"
             ).result_rows
         )
         null_result = client.query(

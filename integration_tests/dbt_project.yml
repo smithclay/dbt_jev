@@ -1,0 +1,23 @@
+name: dbt_jev_integration_tests
+version: 0.1.0
+config-version: 2
+profile: dbt_jev_integration_tests
+require-dbt-version: [">=1.8.0", "<2.0.0"]
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+models:
+  dbt_jev_integration_tests:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+    test_cases:
+      +materialized: table

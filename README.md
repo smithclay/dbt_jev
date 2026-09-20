@@ -150,11 +150,12 @@ The supplied ClickHouse definition uses a non-deterministic
 and a 35-second block timeout. Adjust the pool and timeout only after considering
 API rate limits and the configured retry budget.
 
-## Run the example with fixtures
+## Run the integration-test project with fixtures
 
-The example contains four synthetic tool-call records. It prepares
-`tool_context`, materialises classifications, and aggregates by tool and label.
-Mock responses are protocol fixtures, not evidence of classification accuracy.
+The `integration_tests/` dbt project contains four synthetic tool-call records.
+It prepares `tool_context`, materialises classifications, and aggregates by tool
+and label. Mock responses are protocol fixtures, not evidence of classification
+accuracy.
 
 Prepare the environment once:
 
@@ -174,13 +175,11 @@ Then run dbt in another terminal:
 ```bash
 export TYPESAFE_API_KEY=mock-key
 export TYPESAFE_BASE_URL=http://127.0.0.1:8000
-cd example
+cd integration_tests
 DBT_PROFILES_DIR=. dbt deps
-DBT_PROFILES_DIR=. dbt seed --target duckdb
-DBT_PROFILES_DIR=. dbt run --target duckdb
-DBT_PROFILES_DIR=. dbt test --target duckdb
+DBT_PROFILES_DIR=. dbt build --target duckdb
 DBT_PROFILES_DIR=. dbt show --target duckdb \
-  --inline "select * from {{ ref('failure_summary') }} order by 1, 2"
+  --inline "select * from {{ ref('tool_failure_summary') }} order by 1, 2"
 ```
 
 For ClickHouse, the reproducible container installs the shared runtime and
@@ -189,13 +188,11 @@ executable UDF on the database server:
 ```bash
 docker compose up --build --wait
 export DBT_ENV_SECRET_CLICKHOUSE_PASSWORD=dbt
-cd example
+cd integration_tests
 DBT_PROFILES_DIR=. dbt deps
-DBT_PROFILES_DIR=. dbt seed --target clickhouse
-DBT_PROFILES_DIR=. dbt run --target clickhouse
-DBT_PROFILES_DIR=. dbt test --target clickhouse
+DBT_PROFILES_DIR=. dbt build --target clickhouse
 DBT_PROFILES_DIR=. dbt show --target clickhouse \
-  --inline "select * from {{ ref('failure_summary') }} order by 1, 2"
+  --inline "select * from {{ ref('tool_failure_summary') }} order by 1, 2"
 cd ..
 docker compose down --volumes
 ```

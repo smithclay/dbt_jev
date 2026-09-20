@@ -1,5 +1,3 @@
-{{ config(materialized='table') }}
-
 select
     {{ dbt_jev.classify(
         'null',

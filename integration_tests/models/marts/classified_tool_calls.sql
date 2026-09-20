@@ -1,5 +1,3 @@
-{{ config(materialized='table') }}
-
 select
     span_id,
     tool_name,
@@ -12,5 +10,4 @@ select
             'unknown': 'Insufficient evidence'
         }
     ) }} as failure_type
-from {{ ref('prepared_tool_calls') }}
-
+from {{ ref('stg_agent_tool_calls') }}

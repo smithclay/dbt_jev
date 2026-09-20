@@ -36,8 +36,8 @@ def mock_server():
 
 
 def _project(tmp_path: Path) -> Path:
-    project = tmp_path / "example"
-    shutil.copytree(ROOT / "example", project)
+    project = tmp_path / "integration_tests"
+    shutil.copytree(ROOT / "integration_tests", project)
     (project / "packages.yml").write_text(
         f"packages:\n  - local: {ROOT.as_posix()}\n", encoding="utf-8"
     )
@@ -103,15 +103,15 @@ def test_dbt_duckdb_materialises_without_compile_time_or_read_time_calls(
     _dbt(project, env, "run", "--target", "duckdb")
     assert len(requests) == 4
 
-    db_path = project / "target" / "dbt_jev_example.duckdb"
+    db_path = project / "target" / "dbt_jev_integration_tests.duckdb"
     with duckdb.connect(str(db_path), read_only=True) as connection:
         rows = dict(
             connection.execute(
-                "select span_id, failure_type from classified_calls order by span_id"
+                "select span_id, failure_type from classified_tool_calls order by span_id"
             ).fetchall()
         )
         summary_count = connection.execute(
-            "select count(*) from failure_summary"
+            "select count(*) from tool_failure_summary"
         ).fetchone()[0]
         null_result = connection.execute(
             "select classification from quoted_and_null"

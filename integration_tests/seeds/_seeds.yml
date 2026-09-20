@@ -1,0 +1,15 @@
+version: 2
+
+seeds:
+  - name: agent_tool_calls
+    description: Synthetic, non-production inputs used by the package integration tests.
+    columns:
+      - name: span_id
+        description: Synthetic identifier for the tool call.
+        data_tests:
+          - unique
+          - not_null
+      - name: tool_name
+        description: Name of the synthetic tool that ran.
+        data_tests:
+          - not_null
