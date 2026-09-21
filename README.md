@@ -7,7 +7,11 @@ work on DuckDB and ClickHouse. They expose Jev Choice as a nullable
 label, Noul as a nullable match probability, and Score as a nullable numeric
 rating.
 
-[![Terminal demo showing dbt_jev classifying messy tool-call results as expected, unexpected, or unknown](demos/dbt_jev_x_demo.gif)](demos/dbt_jev_x_demo.mp4)
+<p align="center">
+  <a href="demos/dbt_jev_x_demo.mp4">
+    <img src="demos/dbt_jev_x_demo.gif" alt="Terminal demo showing dbt_jev classifying messy tool-call results as expected, unexpected, or unknown" width="800">
+  </a>
+</p>
 
 _A real OpenRouter-backed result, replayed deterministically with
 [VHS](https://github.com/charmbracelet/vhs). Click the demo for the MP4._

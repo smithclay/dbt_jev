@@ -26,3 +26,8 @@ Only the secret-free `demos/` directory is mounted into the renderer. The output
 is a 1280×720 MP4, an inline README GIF, and PNG cover and end-card frames. The
 final FFmpeg pass moves MP4 metadata to the front for reliable web playback and
 adds a clear end hold.
+
+The README renders the 1280×720 GIF at a width-only 800 pixels. This keeps the
+terminal text sharp on dense displays, preserves its aspect ratio, and allows
+GitHub to scale it down with the content column on narrower screens. The GIF is
+the autoplaying preview; clicking it opens the H.264 MP4.
