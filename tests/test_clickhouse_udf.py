@@ -38,9 +38,77 @@ def test_json_each_row_preserves_quotes_unicode_and_null(monkeypatch):
     assert calls == [("Couldn't find café/雪", choices), (None, choices)]
 
 
+def test_json_each_row_dispatches_match_and_score(monkeypatch):
+    calls = []
+
+    def fake_match(left, right, instructions, criteria):
+        calls.append(("match", left, right, instructions, criteria))
+        return 0.875
+
+    def fake_score(state, levels, instructions):
+        calls.append(("score", state, levels, instructions))
+        return 1.75
+
+    monkeypatch.setattr(clickhouse_udf, "match_probability", fake_match)
+    monkeypatch.setattr(clickhouse_udf, "score", fake_score)
+    stdin = io.StringIO(
+        "".join(
+            [
+                json.dumps(
+                    {
+                        "left": "O'Brien",
+                        "right": "Obrien",
+                        "instructions": "Same person?",
+                        "criteria": '{"true":"Same","false":"Different"}',
+                    }
+                )
+                + "\n",
+                json.dumps(
+                    {
+                        "input": "urgent message",
+                        "levels": '["Low","Medium","High"]',
+                        "instructions": "Rate urgency",
+                    }
+                )
+                + "\n",
+            ]
+        )
+    )
+    stdout = io.StringIO()
+
+    clickhouse_udf.serve(stdin, stdout)
+
+    assert [json.loads(line) for line in stdout.getvalue().splitlines()] == [
+        {"result": 0.875},
+        {"result": 1.75},
+    ]
+    assert calls == [
+        (
+            "match",
+            "O'Brien",
+            "Obrien",
+            "Same person?",
+            '{"true":"Same","false":"Different"}',
+        ),
+        (
+            "score",
+            "urgent message",
+            '["Low","Medium","High"]',
+            "Rate urgency",
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     "row",
-    [[], {}, {"input": "value"}, {"input": 3, "choices": "{}"}],
+    [
+        [],
+        {},
+        {"input": "value"},
+        {"input": 3, "choices": "{}"},
+        {"left": "a", "right": "b"},
+        {"input": "value", "levels": "[]"},
+    ],
 )
 def test_malformed_rows_raise_safe_errors(row):
     with pytest.raises(JevError, match="ClickHouse"):

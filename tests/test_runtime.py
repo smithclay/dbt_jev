@@ -4,7 +4,14 @@ import threading
 
 import pytest
 
-from dbt_jev.runtime import JevClassifier, JevCriteriaError, JevError, RuntimeConfig
+from dbt_jev.runtime import (
+    JevClassifier,
+    JevCriteriaError,
+    JevError,
+    RuntimeConfig,
+    validate_levels,
+    validate_noul_criteria,
+)
 from tests.mock_service import create_server
 
 CHOICES = {
@@ -71,10 +78,71 @@ def test_provider_requests_have_equivalent_decision_semantics(mock_server):
 
 
 @pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_match_probability_uses_structured_pair_state(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    criteria = {
+        "true": "The records represent the same customer",
+        "false": "The records represent different customers",
+    }
+    assert client.match_probability(
+        "O'Brien / 雪", "Obrien / 雪", "Are these the same customer?", criteria
+    ) == pytest.approx(0.875)
+    sent = requests_for(mock_server)[0]["body"]
+    assert sent["state"] == {"left": "O'Brien / 雪", "right": "Obrien / 雪"}
+    assert sent["questions"]["match"] == {
+        "type": "noul",
+        "instructions": "Are these the same customer?",
+        "criteria": criteria,
+    }
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_score_returns_expected_score(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    levels = ["No urgency", "Needs attention", "Urgent"]
+    assert client.score(
+        "Customer cannot log in", levels, "Rate urgency"
+    ) == pytest.approx(1.75)
+    sent = requests_for(mock_server)[0]["body"]
+    assert sent["questions"]["score"] == {
+        "type": "score",
+        "instructions": "Rate urgency",
+        "criteria": levels,
+    }
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
 def test_null_input_returns_null_without_request(mock_server, provider):
     client = make_classifier(mock_server, provider)
     assert client.classify(None, CHOICES) is None
+    assert client.match_probability(None, "right", "Do they match?") is None
+    assert client.match_probability("left", None, "Do they match?") is None
+    assert client.score(None, ["Low", "High"], "Rate this") is None
     assert requests_for(mock_server) == []
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    ["not json", "[]", {"maybe": "Uncertain"}, {"true": ""}],
+)
+def test_invalid_noul_criteria_is_rejected(criteria):
+    with pytest.raises(JevCriteriaError):
+        validate_noul_criteria(criteria)
+
+
+@pytest.mark.parametrize("levels", ["not json", "{}", [], ["Low", ""]])
+def test_invalid_score_levels_are_rejected(levels):
+    with pytest.raises(JevCriteriaError):
+        validate_levels(levels)
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_numeric_answers_must_be_inside_primitive_range(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    with pytest.raises(JevError, match="outside the range"):
+        client.match_probability("fixture:out_of_range", "right", "Do they match?")
+    with pytest.raises(JevError, match="outside the supplied rubric"):
+        client.score("fixture:out_of_range", ["Low", "Medium", "High"], "Rate it")
 
 
 @pytest.mark.parametrize(

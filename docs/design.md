@@ -8,6 +8,10 @@ The implementation follows TypeSafe's current primary documentation:
   authentication, request and response shapes, and documented HTTP failures.
 - [Choice primitive](https://docs.typesafe.ai/primitives/choice): criteria semantics
   and the maximum of 255 options.
+- [Noul primitive](https://docs.typesafe.ai/primitives/noul): yes/no probability
+  semantics used by `match_probability`.
+- [Score primitive](https://docs.typesafe.ai/primitives/score): ordered rubric and
+  expected-score semantics used by `score`.
 - [Models](https://docs.typesafe.ai/models): `jev-latest`, text input, context and
   rate limits.
 - [Python SDK](https://docs.typesafe.ai/sdk/python): official synchronous client,
@@ -35,9 +39,10 @@ confirmed the endpoint path, Choice response field, per-row execution model, and
 the need to treat rate limits, server failures, and dropped connections as
 transient. This package does not use or build its native DuckDB extension.
 
-At the time of implementation, Jev 1.13 documents text-only input, a 64k-token
-request budget, a 32k-token budget for `state` plus the longest question, and at
-most 255 Choice options. The moving `jev-latest` alias can change behaviour; set
+At the time of implementation, Jev 1.13 accepts text or structured JSON state,
+documents a 64k-token request budget, a 32k-token budget for `state` plus the
+longest question, and at most 255 Choice options. The moving `jev-latest` alias
+can change behaviour; set
 `TYPESAFE_DEFAULT_MODEL=jev-1.13.0` when a deployment needs a pinned model.
 
 ## Why these backend mechanisms
@@ -69,7 +74,7 @@ implementation could add it inside the shared Python runtime: DuckDB's plugin
 would retain the model in the dbt runner and ClickHouse's executable pool would
 retain it on the database server. The large model dependencies and checkpoints
 would remain an optional installation extra, and provider-specific confidence or
-probability outputs would not change the label-only macro contract.
+probability outputs would not change the label-only `classify` contract.
 
 ## Relationship to dbt_context_engineering
 
@@ -85,8 +90,8 @@ dispatch beneath `dbt_context_engineering.classify`. A Jev provider could transl
 the first enum-bearing schema property plus its per-enum descriptions into the
 `choices` mapping, then call this package's runtime SQL function. Merely changing
 dbt dispatch search order is insufficient because the macro signatures differ, and
-replacing the existing adapter macro would bypass its safety gates. This MVP does
-not add that integration or expand either public API.
+replacing the existing adapter macro would bypass its safety gates. This package
+does not add that integration.
 
 ## Deliberate exclusions
 

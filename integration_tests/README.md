@@ -6,8 +6,9 @@ its parent directory. It uses only synthetic tool-call records and supports the
 
 The project follows the standard dbt package-test shape: a seed, a staging view,
 materialized mart tables, YAML data tests, and one `dbt build` entry point. The
-Python test suite additionally asserts request equivalence, error handling, and
-that parsing, compilation, and reads do not trigger inference.
+Python test suite additionally exercises Choice, Noul, and Score; asserts request
+equivalence and error handling; and proves that parsing, compilation, NULL
+inputs, and materialized-table reads do not trigger inference.
 
 From this directory, after starting the fixture service described in the root
 README, run:

@@ -26,16 +26,42 @@
 {%- endmacro %}
 
 
-{% macro _choices_json_literal(choices) -%}
-    {%- set serialised = tojson(choices) -%}
+{% macro _json_sql_literal(value) -%}
+    {%- set serialised = tojson(value) -%}
     {{ return("'" ~ (serialised | replace("'", "''")) ~ "'") }}
+{%- endmacro %}
+
+
+{% macro _sql_string_literal(value) -%}
+    {{ return("'" ~ (value | replace("'", "''")) ~ "'") }}
+{%- endmacro %}
+
+
+{% macro _clickhouse_sql_string_literal(value) -%}
+    {%- set escaped = value | replace('\\', '\\\\') | replace("'", "''") -%}
+    {{ return("'" ~ escaped ~ "'") }}
+{%- endmacro %}
+
+
+{% macro _clickhouse_json_sql_literal(value) -%}
+    {{ return(dbt_jev._clickhouse_sql_string_literal(tojson(value))) }}
+{%- endmacro %}
+
+
+{% macro _validate_instructions(instructions, macro_name) -%}
+    {%- if instructions is not string or instructions | length == 0 -%}
+        {{ exceptions.raise_compiler_error(
+            "dbt_jev." ~ macro_name ~ ": instructions must be non-empty text"
+        ) }}
+    {%- endif -%}
+    {{ return(instructions) }}
 {%- endmacro %}
 
 
 {% macro duckdb__classify(input_expr, choices) -%}
     jev_classify(
         cast({{ input_expr }} as varchar),
-        {{ dbt_jev._choices_json_literal(choices) }}
+        {{ dbt_jev._json_sql_literal(choices) }}
     )
 {%- endmacro %}
 
@@ -43,7 +69,7 @@
 {% macro clickhouse__classify(input_expr, choices) -%}
     jev_classify(
         cast({{ input_expr }} as Nullable(String)),
-        cast({{ dbt_jev._choices_json_literal(choices) }} as String)
+        cast({{ dbt_jev._clickhouse_json_sql_literal(choices) }} as String)
     )
 {%- endmacro %}
 
