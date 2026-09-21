@@ -30,7 +30,11 @@ def _http_json(url: str, *, method: str = "GET"):
 
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "integration_tests"
-    shutil.copytree(ROOT / "integration_tests", project)
+    shutil.copytree(
+        ROOT / "integration_tests",
+        project,
+        ignore=shutil.ignore_patterns("dbt_packages", "target", "logs", ".user.yml"),
+    )
     (project / "packages.yml").write_text(
         f"packages:\n  - local: {ROOT.as_posix()}\n", encoding="utf-8"
     )
@@ -55,7 +59,10 @@ def _dbt(project: Path, env: dict[str, str], target: str, *args: str):
 
 def _normalised_requests(base_url: str):
     bodies = [item["body"] for item in _http_json(base_url + "/_requests")["requests"]]
-    return sorted(bodies, key=lambda body: body["state"])
+    return sorted(
+        bodies,
+        key=lambda body: json.dumps(body["state"], ensure_ascii=False, sort_keys=True),
+    )
 
 
 @pytest.mark.clickhouse
@@ -100,9 +107,12 @@ def test_duckdb_and_clickhouse_send_and_materialise_the_same_values(tmp_path):
                 "select span_id, failure_type from classified_tool_calls order by span_id"
             ).fetchall()
         )
-        duckdb_null_result = connection.execute(
-            "select classification from quoted_and_null"
-        ).fetchone()[0]
+        duckdb_null_results = connection.execute(
+            "select classification, match_probability, score from quoted_and_null"
+        ).fetchone()
+        duckdb_decision_results = connection.execute(
+            "select match_probability, urgency_score from decision_primitives"
+        ).fetchone()
 
     _http_json(mock_url + "/_reset", method="POST")
     clickhouse_compile_env = {
@@ -136,15 +146,20 @@ def test_duckdb_and_clickhouse_send_and_materialise_the_same_values(tmp_path):
                 "select span_id, failure_type from classified_tool_calls order by span_id"
             ).result_rows
         )
-        null_result = client.query(
-            "select classification from quoted_and_null"
-        ).first_row[0]
+        null_results = client.query(
+            "select classification, match_probability, score from quoted_and_null"
+        ).first_row
+        decision_results = client.query(
+            "select match_probability, urgency_score from decision_primitives"
+        ).first_row
     finally:
         client.close()
     assert rows == EXPECTED
     assert duckdb_rows == rows
-    assert null_result is None
-    assert duckdb_null_result is None
+    assert null_results == (None, None, None)
+    assert duckdb_null_results == (None, None, None)
+    assert decision_results == pytest.approx((0.875, 1.75))
+    assert duckdb_decision_results == pytest.approx((0.875, 1.75))
     assert _normalised_requests(mock_url) == clickhouse_requests
     _dbt(project, clickhouse_compile_env, "clickhouse", "test")
     assert _normalised_requests(mock_url) == clickhouse_requests

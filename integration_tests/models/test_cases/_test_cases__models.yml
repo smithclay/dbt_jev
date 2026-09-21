@@ -6,3 +6,18 @@ models:
     columns:
       - name: classification
         description: Expected SQL NULL result.
+      - name: match_probability
+        description: Expected SQL NULL result.
+      - name: score
+        description: Expected SQL NULL result.
+  - name: decision_primitives
+    description: Regression fixture for Noul match probability and ordered Score.
+    columns:
+      - name: match_probability
+        description: Probability that the two fixture records match.
+        data_tests:
+          - not_null
+      - name: urgency_score
+        description: Expected urgency score against the ordered fixture rubric.
+        data_tests:
+          - not_null

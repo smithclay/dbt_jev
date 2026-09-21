@@ -1,22 +1,26 @@
-"""Validated, synchronous Jev Choice calls shared by DuckDB and ClickHouse."""
+"""Validated, synchronous Jev calls shared by DuckDB and ClickHouse."""
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
+from typesafe_sdk import Choice, Noul, RetryPolicy, Score, TypeSafeClient
 
-QUESTION_ID = "classification"
+CLASSIFICATION_QUESTION_ID = "classification"
+MATCH_QUESTION_ID = "match"
+SCORE_QUESTION_ID = "score"
 QUESTION_INSTRUCTIONS = "Classify the state into exactly one of the supplied choices."
 MAX_CHOICES = 255
+NOUL_CRITERIA_KEYS = {"true", "false"}
 PROVIDERS = {"typesafe", "openrouter"}
 OPENROUTER_RETRY_STATUSES = {429, 500, 502, 503, 504, 524, 529}
 
@@ -142,8 +146,75 @@ def validate_choices(value: str | Mapping[str, Any]) -> dict[str, str]:
     return choices
 
 
+def validate_instructions(value: Any, primitive: str) -> str:
+    """Return non-empty instructions for a Noul or Score question."""
+
+    if not isinstance(value, str) or not value:
+        raise JevCriteriaError(f"Jev {primitive} instructions must be non-empty text")
+    return value
+
+
+def validate_noul_criteria(
+    value: str | Mapping[str, Any] | None,
+) -> dict[str, str] | None:
+    """Return optional true/false descriptions for a Noul question."""
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise JevCriteriaError("Jev Noul criteria must be valid JSON") from exc
+    else:
+        decoded = value
+
+    if decoded is None:
+        return None
+    if not isinstance(decoded, Mapping):
+        raise JevCriteriaError("Jev Noul criteria must be a JSON object or null")
+    unknown = set(decoded) - NOUL_CRITERIA_KEYS
+    if unknown:
+        raise JevCriteriaError(
+            "Jev Noul criteria only supports the labels 'true' and 'false'"
+        )
+
+    criteria: dict[str, str] = {}
+    for label, description in decoded.items():
+        if not isinstance(description, str) or not description:
+            raise JevCriteriaError(
+                "Every Jev Noul criterion description must be non-empty text"
+            )
+        criteria[label] = description
+    return criteria or None
+
+
+def validate_levels(value: str | Sequence[Any]) -> list[str]:
+    """Return a validated ordered Score rubric without making a request."""
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise JevCriteriaError("Jev Score levels must be valid JSON") from exc
+    else:
+        decoded = value
+
+    if isinstance(decoded, (str, bytes)) or not isinstance(decoded, Sequence):
+        raise JevCriteriaError("Jev Score levels must be a JSON array")
+    if not decoded:
+        raise JevCriteriaError("Jev Score requires at least one level")
+
+    levels: list[str] = []
+    for description in decoded:
+        if not isinstance(description, str) or not description:
+            raise JevCriteriaError(
+                "Every Jev Score level must be a non-empty text description"
+            )
+        levels.append(description)
+    return levels
+
+
 class JevClassifier:
-    """Long-lived scalar classifier using TypeSafe directly or OpenRouter Decisions."""
+    """Long-lived scalar decision client for TypeSafe or OpenRouter Decisions."""
 
     def __init__(
         self, config: RuntimeConfig | None = None, *, api_key: str | None = None
@@ -199,27 +270,19 @@ class JevClassifier:
         if state is None:
             return None
         criteria = validate_choices(choices)
-        try:
-            with self._lock:
-                if self.config.provider == "openrouter":
-                    label = self._classify_openrouter(str(state), criteria)
-                else:
-                    # The official TypeSafe SDK owns connection reuse and bounded
-                    # transient retries. Do not assume its sync client is thread-safe.
-                    question = Choice(
-                        instructions=QUESTION_INSTRUCTIONS, criteria=criteria
-                    )
-                    assert self._client is not None
-                    response = self._client.system_one(
-                        state=str(state),
-                        questions={QUESTION_ID: question},
-                    )
-                    answer = response.answers[QUESTION_ID]
-                    label = answer.choice
-        except Exception as exc:
-            if isinstance(exc, JevError):
-                raise
-            raise _sanitised_error(exc, self.config) from None
+        answer = self._ask(
+            state=str(state),
+            question_id=CLASSIFICATION_QUESTION_ID,
+            direct_question=Choice(
+                instructions=QUESTION_INSTRUCTIONS, criteria=criteria
+            ),
+            wire_question={
+                "type": "choice",
+                "instructions": QUESTION_INSTRUCTIONS,
+                "criteria": criteria,
+            },
+        )
+        label = _answer_field(answer, "choice")
 
         if not isinstance(label, str):
             raise JevError(
@@ -229,18 +292,95 @@ class JevClassifier:
             raise JevError("Jev returned a Choice label outside the supplied criteria")
         return label
 
-    def _classify_openrouter(self, state: str, criteria: dict[str, str]) -> Any:
+    def match_probability(
+        self,
+        left: str | None,
+        right: str | None,
+        instructions: str,
+        criteria: str | Mapping[str, Any] | None = None,
+    ) -> float | None:
+        """Return the probability that two values match, or ``None`` for NULL input."""
+
+        if left is None or right is None:
+            return None
+        instructions = validate_instructions(instructions, "Noul")
+        criteria = validate_noul_criteria(criteria)
+        state = {"left": str(left), "right": str(right)}
+        answer = self._ask(
+            state=state,
+            question_id=MATCH_QUESTION_ID,
+            direct_question=Noul(instructions=instructions, criteria=criteria),
+            wire_question={
+                "type": "noul",
+                "instructions": instructions,
+                **({"criteria": criteria} if criteria is not None else {}),
+            },
+        )
+        probability = _answer_number(answer, "noul", "Noul")
+        if not 0.0 <= probability <= 1.0:
+            raise JevError("Jev returned a Noul probability outside the range 0 to 1")
+        return probability
+
+    def score(
+        self,
+        state: str | None,
+        levels: str | Sequence[Any],
+        instructions: str,
+    ) -> float | None:
+        """Return the expected score for an ordered rubric, or ``None`` for NULL."""
+
+        if state is None:
+            return None
+        levels = validate_levels(levels)
+        instructions = validate_instructions(instructions, "Score")
+        answer = self._ask(
+            state=str(state),
+            question_id=SCORE_QUESTION_ID,
+            direct_question=Score(instructions=instructions, criteria=levels),
+            wire_question={
+                "type": "score",
+                "instructions": instructions,
+                "criteria": levels,
+            },
+        )
+        result = _answer_number(answer, "score", "Score")
+        if not 0.0 <= result <= len(levels) - 1:
+            raise JevError("Jev returned a Score outside the supplied rubric")
+        return result
+
+    def _ask(
+        self,
+        *,
+        state: Any,
+        question_id: str,
+        direct_question: Any,
+        wire_question: dict[str, Any],
+    ) -> Any:
+        try:
+            with self._lock:
+                if self.config.provider == "openrouter":
+                    return self._ask_openrouter(state, question_id, wire_question)
+                # The official TypeSafe SDK owns connection reuse and bounded
+                # transient retries. Do not assume its sync client is thread-safe.
+                assert self._client is not None
+                response = self._client.system_one(
+                    state=state,
+                    questions={question_id: direct_question},
+                )
+                return response.answers[question_id]
+        except Exception as exc:
+            if isinstance(exc, JevError):
+                raise
+            raise _sanitised_error(exc, self.config) from None
+
+    def _ask_openrouter(
+        self, state: Any, question_id: str, question: dict[str, Any]
+    ) -> Any:
         payload = json.dumps(
             {
                 "model": self.config.model,
                 "state": state,
-                "questions": {
-                    QUESTION_ID: {
-                        "type": "choice",
-                        "instructions": QUESTION_INSTRUCTIONS,
-                        "criteria": criteria,
-                    }
-                },
+                "questions": {question_id: question},
             },
             ensure_ascii=False,
         ).encode("utf-8")
@@ -269,10 +409,10 @@ class JevClassifier:
                     raw = response.read()
                 try:
                     decoded = json.loads(raw)
-                    answer = decoded["answers"][QUESTION_ID]
-                    if answer.get("type") != "choice":
+                    answer = decoded["answers"][question_id]
+                    if answer.get("type") != question["type"]:
                         raise KeyError("type")
-                    return answer["choice"]
+                    return answer
                 except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
                     raise JevError("Jev returned a malformed response") from None
             except urllib.error.HTTPError as exc:
@@ -300,6 +440,26 @@ class JevClassifier:
                 time.sleep(min(delay, remaining))
 
         raise AssertionError("unreachable")
+
+
+def _answer_field(answer: Any, field: str) -> Any:
+    if isinstance(answer, Mapping):
+        return answer.get(field)
+    return getattr(answer, field, None)
+
+
+def _answer_number(answer: Any, field: str, primitive: str) -> float:
+    value = _answer_field(answer, field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise JevError(
+            f"Jev returned a malformed {primitive} response: {field} is not numeric"
+        )
+    result = float(value)
+    if not math.isfinite(result):
+        raise JevError(
+            f"Jev returned a malformed {primitive} response: {field} is not finite"
+        )
+    return result
 
 
 class _HTTPFailure(Exception):
@@ -343,14 +503,49 @@ _default_lock = threading.Lock()
 def classify(state: str | None, choices: str | Mapping[str, Any]) -> str | None:
     """Convenience entry point for runtimes that retain module globals."""
 
-    global _default_classifier
     if state is None:
         return None
     # Validate before initialising the client so bad criteria cannot be hidden by a
     # missing credential and can never result in an HTTP request.
     criteria = validate_choices(choices)
+    return _get_default_classifier().classify(state, criteria)
+
+
+def match_probability(
+    left: str | None,
+    right: str | None,
+    instructions: str,
+    criteria: str | Mapping[str, Any] | None = None,
+) -> float | None:
+    """Convenience Noul entry point for retained module runtimes."""
+
+    if left is None or right is None:
+        return None
+    validated_instructions = validate_instructions(instructions, "Noul")
+    validated_criteria = validate_noul_criteria(criteria)
+    return _get_default_classifier().match_probability(
+        left, right, validated_instructions, validated_criteria
+    )
+
+
+def score(
+    state: str | None, levels: str | Sequence[Any], instructions: str
+) -> float | None:
+    """Convenience Score entry point for retained module runtimes."""
+
+    if state is None:
+        return None
+    validated_levels = validate_levels(levels)
+    validated_instructions = validate_instructions(instructions, "Score")
+    return _get_default_classifier().score(
+        state, validated_levels, validated_instructions
+    )
+
+
+def _get_default_classifier() -> JevClassifier:
+    global _default_classifier
     if _default_classifier is None:
         with _default_lock:
             if _default_classifier is None:
                 _default_classifier = JevClassifier.from_env()
-    return _default_classifier.classify(state, criteria)
+    return _default_classifier

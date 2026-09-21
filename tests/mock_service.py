@@ -91,24 +91,17 @@ def create_server(host: str, port: int) -> ThreadingHTTPServer:
                 self.wfile.write(encoded)
                 return
 
-            question = body.get("questions", {}).get("classification", {})
-            criteria = question.get("criteria", {})
-            label = _pick_label(state_text, criteria)
-            if "fixture:out_of_set" in state_text:
-                label = "not-supplied"
-            probabilities = {key: (1.0 if key == label else 0.0) for key in criteria}
+            questions = body.get("questions", {})
+            if not isinstance(questions, dict) or len(questions) != 1:
+                self._send_json(400, {"detail": "expected one question"})
+                return
+            question_id, question = next(iter(questions.items()))
+            answer = _answer_fixture(state_text, question)
             self._send_json(
                 200,
                 {
                     "model": "jev-fixture-1",
-                    "answers": {
-                        "classification": {
-                            "type": "choice",
-                            "choice": label,
-                            "probabilities": probabilities,
-                            "confidence": 1.0,
-                        }
-                    },
+                    "answers": {question_id: answer},
                     "usage": {"input_tokens": 10, "output_tokens": 1},
                 },
             )
@@ -134,6 +127,43 @@ def _pick_label(state: str, criteria: dict[str, Any]) -> str:
     if "unknown" in criteria:
         return "unknown"
     return next(iter(criteria), "missing")
+
+
+def _answer_fixture(state: str, question: dict[str, Any]) -> dict[str, Any]:
+    question_type = question.get("type")
+    if question_type == "choice":
+        criteria = question.get("criteria", {})
+        label = _pick_label(state, criteria)
+        if "fixture:out_of_set" in state:
+            label = "not-supplied"
+        probabilities = {key: (1.0 if key == label else 0.0) for key in criteria}
+        return {
+            "type": "choice",
+            "choice": label,
+            "probabilities": probabilities,
+            "confidence": 1.0,
+        }
+    if question_type == "noul":
+        return {
+            "type": "noul",
+            "noul": 1.5 if "fixture:out_of_range" in state else 0.875,
+        }
+    if question_type == "score":
+        levels = question.get("criteria", [])
+        result = 1.75 if len(levels) >= 3 else float(len(levels) - 1)
+        if "fixture:out_of_range" in state:
+            result = float(len(levels))
+        return {
+            "type": "score",
+            "score": result,
+            "confidence": 0.8,
+            "legend": {str(index): level for index, level in enumerate(levels)},
+            "probabilities": {
+                str(index): (1.0 if index == round(result) else 0.0)
+                for index in range(len(levels))
+            },
+        }
+    return {"type": "unsupported"}
 
 
 def main() -> None:

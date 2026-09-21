@@ -1,10 +1,16 @@
 # dbt_jev
 
-`dbt_jev` classifies each non-NULL SQL value with Jev through either
+`dbt_jev` evaluates SQL values with Jev through either
 [TypeSafe AI's hosted API](https://docs.typesafe.ai/api) or
-[OpenRouter](https://openrouter.ai/~typesafe/jev-latest/). The same public macro
-works on DuckDB and ClickHouse and returns nullable text containing one supplied
-label.
+[OpenRouter](https://openrouter.ai/~typesafe/jev-latest/). The same public macros
+work on DuckDB and ClickHouse. They expose Jev Choice as a nullable
+label, Noul as a nullable match probability, and Score as a nullable numeric
+rating.
+
+[![Terminal demo showing dbt_jev classifying messy tool-call results as expected, unexpected, or unknown](demos/dbt_jev_x_demo.gif)](demos/dbt_jev_x_demo.mp4)
+
+_A real OpenRouter-backed result, replayed deterministically with
+[VHS](https://github.com/charmbracelet/vhs). Click the demo for the MP4._
 
 ```sql
 {{ config(materialized='table') }}
@@ -22,9 +28,45 @@ select
 from {{ ref('agent_tool_calls') }}
 ```
 
-The macro only generates SQL. Inference starts when the database executes the
-SQL, never while dbt parses or compiles it. Materialise classifications as tables
-so downstream reads use stored answers.
+Score a candidate pair after ordinary SQL has generated it:
+
+```sql
+select
+    lead_id,
+    customer_id,
+    {{ dbt_jev.match_probability(
+        'lead_record',
+        'customer_record',
+        instructions='Do these records represent the same customer?',
+        criteria={
+            'true': 'Both records identify the same customer',
+            'false': 'The records identify different customers'
+        }
+    ) }} as match_probability
+from {{ ref('int_leads_customers_candidates') }}
+```
+
+Apply an ordered rubric to one value:
+
+```sql
+select
+    ticket_id,
+    {{ dbt_jev.score(
+        'ticket_context',
+        levels=['No urgency', 'Needs attention', 'Urgent'],
+        instructions='Rate the urgency of this support request'
+    ) }} as urgency_score
+from {{ ref('stg_support__tickets') }}
+```
+
+`match_probability` sends the two text-cast expressions as structured `left`
+and `right` state and returns a number from 0 to 1. `score` returns the expected
+score from 0 through `levels | length - 1`, so a three-level rubric can produce
+fractional values such as `1.75`.
+
+The macros only generate SQL. Inference starts when the database executes the
+SQL, never while dbt parses or compiles it. Materialise decisions as tables so
+downstream reads use stored answers.
 
 ## Tested support
 
@@ -136,7 +178,7 @@ On every ClickHouse server that can execute the function:
    ```sql
    select name, origin
    from system.functions
-   where name = 'jev_classify';
+   where name in ('jev_classify', 'jev_match_probability', 'jev_score');
    ```
 
 The database administrator needs filesystem access to the server configuration,
@@ -145,17 +187,17 @@ The dbt role needs its ordinary database creation/read permissions and must be
 allowed to call the configured function. `dbt deps` does not install any of these
 server-side prerequisites.
 
-The supplied ClickHouse definition uses a non-deterministic
-`executable_pool`, `JSONEachRow`, nullable input/output, one long-lived worker,
-and a 35-second block timeout. Adjust the pool and timeout only after considering
-API rate limits and the configured retry budget.
+The supplied ClickHouse definitions use non-deterministic `executable_pool`
+functions, `JSONEachRow`, nullable input/output, one long-lived worker per
+function, and a 35-second block timeout. Adjust the pools and timeouts only after
+considering API rate limits and the configured retry budget.
 
 ## Run the integration-test project with fixtures
 
-The `integration_tests/` dbt project contains four synthetic tool-call records.
-It prepares `tool_context`, materialises classifications, and aggregates by tool
-and label. Mock responses are protocol fixtures, not evidence of classification
-accuracy.
+The `integration_tests/` dbt project contains four synthetic tool-call records
+plus pair-matching and scoring fixtures. It prepares `tool_context`, materialises
+all three decision primitives, and aggregates classifications by tool and label.
+Mock responses are protocol fixtures, not evidence of decision accuracy.
 
 Prepare the environment once:
 
@@ -234,13 +276,15 @@ labels raise sanitised query errors. They never become the semantic label
 
 ## Operational limits
 
-- Execution is scalar: normally one external call for every non-NULL row and
+- Execution is scalar: normally one external call for every complete input row and
   every SQL occurrence. Retries can repeat calls. There is no exactly-once
   guarantee, automatic batching, or durable cache.
 - DuckDB registers the function with `side_effects=True`. ClickHouse declares
   the executable UDF non-deterministic. Optimisers must not assume a pure result.
 - Jev Choice accepts at most 255 labels. This package additionally requires at
   least two non-empty text labels with non-empty text descriptions.
+- `match_probability` returns SQL NULL without a request when either input is
+  NULL. `score` and `classify` do the same when their input is NULL.
 - Row content leaves the database and is sent to the selected provider. Review
   data-handling requirements before using production data.
 - The ClickHouse pool runs on the database server and duplicates its Python

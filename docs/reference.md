@@ -1,6 +1,8 @@
 # Runtime reference
 
-## Macro
+## Macros
+
+### `classify`
 
 ```jinja
 dbt_jev.classify(input_expr, choices)
@@ -24,10 +26,51 @@ Adapter dispatch emits:
 
 Unsupported adapters raise a compiler error.
 
+### `match_probability`
+
+```jinja
+dbt_jev.match_probability(left, right, instructions, criteria=none)
+```
+
+`left` and `right` are SQL expressions. Each is cast to text, then sent as the
+corresponding property of structured Jev state. `instructions` must be non-empty
+compile-time text. Optional `criteria` is a compile-time mapping whose only
+permitted keys are `true` and `false`; each present value must be a non-empty text
+description.
+
+The return type is nullable SQL double precision. A result is Jev's Noul
+probability from 0 to 1 that the instructions are true for the pair. If either
+SQL input is NULL, the result is NULL and no request is made.
+
+| Adapter | SQL function |
+| --- | --- |
+| DuckDB | `jev_match_probability(left, right, instructions, criteria_json)` |
+| ClickHouse | `jev_match_probability(left, right, instructions, criteria_json)` |
+
+### `score`
+
+```jinja
+dbt_jev.score(input_expr, levels, instructions)
+```
+
+`input_expr` is inserted as a SQL expression and cast to text. `levels` must be
+a non-empty, ordered compile-time sequence of non-empty text descriptions. Their
+zero-based positions define the rubric values. `instructions` must be non-empty
+compile-time text.
+
+The return type is nullable SQL double precision. The result is Jev's
+probability-weighted expected score and can be fractional, from 0 through
+`levels | length - 1`. SQL NULL input returns NULL without a request.
+
+| Adapter | SQL function |
+| --- | --- |
+| DuckDB | `jev_score(cast(input_expr as varchar), levels_json, instructions)` |
+| ClickHouse | `jev_score(cast(input_expr as Nullable(String)), levels_json, instructions)` |
+
 ## Jev request
 
-Both SQL functions call the shared Python runtime. Each row produces this semantic
-request on either provider:
+All SQL functions call the shared Python runtime. `classify` produces this
+semantic request on either provider:
 
 ```json
 {
@@ -49,10 +92,17 @@ OpenRouter's `POST /api/alpha/decisions`. OpenRouter's model default is
 `typesafe/jev-1.13`; its base URL is the origin `https://openrouter.ai`, not the
 chat-compatible `/api/v1` base.
 
-The runtime reads `answers.classification.choice` and rejects a label absent from
-`criteria`. It does not use probabilities or confidence in the MVP. Provider
-credentials are selected at execution and never appear in this request body or in
-compiled SQL.
+`match_probability` instead sends structured state shaped as
+`{"left": "...", "right": "..."}` with a `match` question of type `noul`.
+`score` sends text state with a `score` question of type `score` and the ordered
+levels as its criteria.
+
+The runtime reads `answers.classification.choice`, `answers.match.noul`, or
+`answers.score.score` as appropriate. It rejects an out-of-set Choice label,
+a Noul value outside 0–1, or a Score outside the supplied rubric. It intentionally
+does not expose provider confidence or the full probability distribution.
+Provider credentials are selected at execution and never appear in request
+criteria or compiled SQL.
 
 ## Errors
 
@@ -64,21 +114,29 @@ Errors exposed through SQL omit API keys and response bodies:
 - retryable failure after the configured budget: bounded failure with status or
   timeout information;
 - structurally invalid success response: malformed-response error;
-- response label outside the supplied criteria: out-of-set error.
+- response label or numeric result outside the supplied criteria: out-of-range
+  error.
 
 No transport or protocol error is mapped to a classification label.
 
 ## Backend execution
 
-DuckDB registers `jev_classify(VARCHAR, VARCHAR) -> VARCHAR` on every adapter
-connection through the `dbt-duckdb` Python plugin. It uses DuckDB's default
-NULL propagation and declares `side_effects=True`.
+DuckDB registers three scalar functions on every adapter connection through the
+`dbt-duckdb` Python plugin:
 
-ClickHouse loads `jev_classify(Nullable(String), String) -> Nullable(String)`
-from `install/clickhouse/dbt_jev_function.xml`. Its non-deterministic
-`executable_pool` sends named arguments and results as `JSONEachRow` to a
-long-lived Python worker. A JSON `null` input returns JSON `null` before runtime
-configuration or credentials are loaded.
+- `jev_classify(VARCHAR, VARCHAR) -> VARCHAR`;
+- `jev_match_probability(VARCHAR, VARCHAR, VARCHAR, VARCHAR) -> DOUBLE`;
+- `jev_score(VARCHAR, VARCHAR, VARCHAR) -> DOUBLE`.
+
+They use DuckDB's default NULL propagation and declare `side_effects=True`.
+
+ClickHouse loads equivalent nullable functions from
+`install/clickhouse/dbt_jev_function.xml`: `jev_classify` returns
+`Nullable(String)`, while `jev_match_probability` and `jev_score` return
+`Nullable(Float64)`. The non-deterministic `executable_pool` functions send
+named arguments and results as `JSONEachRow` to long-lived Python workers. An
+incomplete NULL input returns JSON `null` before runtime configuration or
+credentials are loaded.
 
 Both wrappers call the same `dbt_jev.runtime` implementation. Credentials and
 provider selection are read in the process that executes that implementation:
