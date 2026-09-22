@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
@@ -11,6 +12,7 @@ from dbt_jev.runtime import (
     RuntimeConfig,
     validate_levels,
     validate_noul_criteria,
+    validate_questions,
 )
 from tests.mock_service import create_server
 
@@ -244,3 +246,121 @@ def test_exhausted_transient_retries_are_bounded(mock_server, provider):
     with pytest.raises(JevError, match="HTTP 529.*3 attempts"):
         client.classify("fixture:always_transient", CHOICES)
     assert len(requests_for(mock_server)) == 3
+
+
+DECISION_QUESTIONS = {
+    "failure_type": {"type": "choice", "choices": CHOICES},
+    "urgency": {
+        "type": "score",
+        "levels": ["No urgency", "Needs attention", "Urgent"],
+        "instructions": "Rate urgency",
+    },
+    "same_customer": {"type": "noul", "instructions": "Are these the same customer?"},
+}
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_decisions_batches_questions_into_one_request(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    parsed = json.loads(client.decisions("No file found", DECISION_QUESTIONS))
+    assert parsed["failure_type"] == "expected"
+    assert parsed["urgency"] == pytest.approx(1.75)
+    assert parsed["same_customer"] == pytest.approx(0.875)
+
+    requests = requests_for(mock_server)
+    assert len(requests) == 1, "questions must batch into a single request"
+    body = requests[0]["body"]
+    assert set(body["questions"]) == {"failure_type", "urgency", "same_customer"}
+    assert body["state"] == "No file found"
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_decisions_null_state_returns_null_without_request(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    assert client.decisions(None, DECISION_QUESTIONS) is None
+    assert requests_for(mock_server) == []
+
+
+@pytest.mark.parametrize("provider", ["typesafe", "openrouter"])
+def test_decisions_rejects_out_of_set_label(mock_server, provider):
+    client = make_classifier(mock_server, provider)
+    with pytest.raises(JevError, match="outside the supplied criteria"):
+        client.decisions(
+            "fixture:out_of_set", {"only": {"type": "choice", "choices": CHOICES}}
+        )
+
+
+def test_classify_many_dedupes_and_preserves_order(mock_server):
+    client = make_classifier(mock_server)
+    states = [
+        "No file found",
+        "No file found",
+        "Authentication failure",
+        None,
+        "No file found",
+    ]
+    results = client.classify_many(states, CHOICES)
+
+    assert results == ["expected", "expected", "unexpected", None, "expected"]
+    # Two distinct non-null states -> two requests despite five input rows.
+    assert len(requests_for(mock_server)) == 2
+
+
+def test_match_probability_many_handles_nulls_and_dedupes(mock_server):
+    client = make_classifier(mock_server)
+    lefts = ["O'Brien", "O'Brien", None, "Smith"]
+    rights = ["Obrien", "Obrien", "anything", None]
+    results = client.match_probability_many(
+        lefts, rights, "Are these the same customer?"
+    )
+    assert results[0] == pytest.approx(0.875)
+    assert results[1] == pytest.approx(0.875)
+    assert results[2] is None
+    assert results[3] is None
+    assert len(requests_for(mock_server)) == 1
+
+
+def test_decisions_many_dedupes_and_preserves_order(mock_server):
+    client = make_classifier(mock_server)
+    questions = {"failure_type": {"type": "choice", "choices": CHOICES}}
+    states = ["No file found", "No file found", None, "Authentication failure"]
+    results = client.decisions_many(states, questions)
+
+    assert results[2] is None
+    assert json.loads(results[0])["failure_type"] == "expected"
+    assert results[0] == results[1]
+    assert json.loads(results[3])["failure_type"] == "unexpected"
+    assert len(requests_for(mock_server)) == 2
+
+
+def test_max_concurrency_one_still_dedupes_and_orders(mock_server):
+    client = make_classifier(mock_server, max_concurrency=1)
+    results = client.classify_many(["No file found", "No file found"], CHOICES)
+    assert results == ["expected", "expected"]
+    assert len(requests_for(mock_server)) == 1
+
+
+@pytest.mark.parametrize(
+    "questions",
+    [
+        "not json",
+        "[]",
+        "{}",
+        {"bad id!": {"type": "choice", "choices": CHOICES}},
+        {"q": {"type": "mystery"}},
+        {"q": {"type": "choice", "choices": {"only": "one"}}},
+        {"q": {"type": "score", "levels": []}},
+        {"q": {"type": "noul"}},
+        {"q": "not-a-mapping"},
+    ],
+)
+def test_invalid_questions_are_rejected(questions):
+    with pytest.raises(JevCriteriaError):
+        validate_questions(questions)
+
+
+def test_invalid_questions_fail_before_request(mock_server):
+    client = make_classifier(mock_server)
+    with pytest.raises(JevCriteriaError):
+        client.decisions("would otherwise be sent", {"q": {"type": "mystery"}})
+    assert requests_for(mock_server) == []

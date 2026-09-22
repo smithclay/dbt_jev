@@ -10,7 +10,7 @@ import json
 import sys
 from typing import Any, TextIO
 
-from .runtime import JevError, classify, match_probability, score
+from .runtime import JevError, classify, decisions, match_probability, score
 
 
 def process_row(row: Any) -> dict[str, str | float | None]:
@@ -19,6 +19,8 @@ def process_row(row: Any) -> dict[str, str | float | None]:
     if not isinstance(row, dict):
         raise JevError("ClickHouse sent a malformed executable-UDF row")
 
+    if "questions" in row:
+        return _decisions_row(row)
     if "choices" in row:
         return _classify_row(row)
     if "levels" in row:
@@ -73,6 +75,18 @@ def _score_row(row: dict[str, Any]) -> dict[str, float | None]:
             "ClickHouse executable-UDF score configuration must be JSON/text"
         )
     return {"result": score(state, levels, instructions)}
+
+
+def _decisions_row(row: dict[str, Any]) -> dict[str, str | None]:
+    if "input" not in row:
+        raise JevError("ClickHouse executable-UDF row is missing an argument")
+    state = row["input"]
+    questions = row["questions"]
+    if state is not None and not isinstance(state, str):
+        raise JevError("ClickHouse executable-UDF input must be text or NULL")
+    if not isinstance(questions, str):
+        raise JevError("ClickHouse executable-UDF questions must be JSON text")
+    return {"result": decisions(state, questions)}
 
 
 def serve(stdin: TextIO, stdout: TextIO) -> None:

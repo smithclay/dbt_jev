@@ -92,17 +92,22 @@ def create_server(host: str, port: int) -> ThreadingHTTPServer:
                 return
 
             questions = body.get("questions", {})
-            if not isinstance(questions, dict) or len(questions) != 1:
-                self._send_json(400, {"detail": "expected one question"})
+            if not isinstance(questions, dict) or len(questions) < 1:
+                self._send_json(400, {"detail": "expected at least one question"})
                 return
-            question_id, question = next(iter(questions.items()))
-            answer = _answer_fixture(state_text, question)
+            answers = {
+                question_id: _answer_fixture(state_text, question)
+                for question_id, question in questions.items()
+            }
             self._send_json(
                 200,
                 {
                     "model": "jev-fixture-1",
-                    "answers": {question_id: answer},
-                    "usage": {"input_tokens": 10, "output_tokens": 1},
+                    "answers": answers,
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": len(answers),
+                    },
                 },
             )
 

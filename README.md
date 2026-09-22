@@ -68,6 +68,45 @@ and `right` state and returns a number from 0 to 1. `score` returns the expected
 score from 0 through `levels | length - 1`, so a three-level rubric can produce
 fractional values such as `1.75`.
 
+Batch several typed questions about the same input into one request with
+`decisions`, then read each answer back with the accessors:
+
+```sql
+with judged as (
+    select
+        ticket_id,
+        {{ dbt_jev.decisions(
+            'ticket_context',
+            questions={
+                'failure_type': {
+                    'type': 'choice',
+                    'choices': {
+                        'expected': 'An expected miss during exploration',
+                        'unexpected': 'An actual malfunction',
+                        'unknown': 'Insufficient evidence'
+                    }
+                },
+                'urgency': {
+                    'type': 'score',
+                    'levels': ['No urgency', 'Needs attention', 'Urgent'],
+                    'instructions': 'Rate the urgency of this support request'
+                }
+            }
+        ) }} as decisions
+    from {{ ref('stg_support__tickets') }}
+)
+
+select
+    ticket_id,
+    {{ dbt_jev.decision_label('decisions', 'failure_type') }} as failure_type,
+    {{ dbt_jev.decision_value('decisions', 'urgency') }} as urgency_score
+from judged
+```
+
+`decisions` returns a JSON object mapping each question id to its scalar answer
+in a single Jev request. `decision_label` extracts a Choice label as text;
+`decision_value` extracts a Noul probability or Score as double.
+
 The macros only generate SQL. Inference starts when the database executes the
 SQL, never while dbt parses or compiles it. Materialise decisions as tables so
 downstream reads use stored answers.
@@ -192,8 +231,9 @@ allowed to call the configured function. `dbt deps` does not install any of thes
 server-side prerequisites.
 
 The supplied ClickHouse definitions use non-deterministic `executable_pool`
-functions, `JSONEachRow`, nullable input/output, one long-lived worker per
-function, and a 35-second block timeout. Adjust the pools and timeouts only after
+functions, `JSONEachRow`, nullable input/output, a pool of long-lived workers per
+function (`pool_size`, default 4, which bounds server-side request concurrency),
+and a 35-second block timeout. Adjust the pools and timeouts only after
 considering API rate limits and the configured retry budget.
 
 ## Run the integration-test project with fixtures
@@ -265,7 +305,9 @@ password. To test OpenRouter instead, start the stack with
 | `DBT_JEV_MAX_RETRIES` | `2` | Retries after the first attempt |
 | `DBT_JEV_BACKOFF_INITIAL` | `0.5` | Initial exponential backoff in seconds |
 | `DBT_JEV_BACKOFF_MAX` | `5` | Maximum backoff in seconds |
+| `DBT_JEV_BACKOFF_JITTER` | `0.5` | Backoff jitter fraction (0 = fixed, 1 = full jitter) |
 | `DBT_JEV_RETRY_BUDGET` | `30` | Total retry budget in seconds |
+| `DBT_JEV_MAX_CONCURRENCY` | `8` | Max in-flight requests per DuckDB connection |
 
 DuckDB may receive the non-secret settings in the plugin's `config` mapping.
 API keys are intentionally rejected there. ClickHouse reads all settings from
@@ -280,9 +322,17 @@ labels raise sanitised query errors. They never become the semantic label
 
 ## Operational limits
 
-- Execution is scalar: normally one external call for every complete input row and
-  every SQL occurrence. Retries can repeat calls. There is no exactly-once
-  guarantee, automatic batching, or durable cache.
+- Execution is row-level but throughput-aware. The DuckDB plugin registers
+  vectorized (Arrow) UDFs, so each data chunk is evaluated with bounded
+  concurrency (`DBT_JEV_MAX_CONCURRENCY`, default 8) and identical inputs are
+  de-duplicated to a single request within the run. On ClickHouse, concurrency is
+  the executable-UDF `pool_size` (default 4). There is still no exactly-once
+  guarantee or durable cross-run cache: retries can repeat calls, and re-running a
+  model re-issues requests unless you materialise results as a table.
+- Prefer `dbt_jev.decisions` when a model derives several Jev columns from the
+  same input. Jev scores every question in a request in parallel for roughly the
+  cost of one, so batching questions is far cheaper and faster than emitting a
+  separate primitive (and its own request) per column.
 - DuckDB registers the function with `side_effects=True`. ClickHouse declares
   the executable UDF non-deterministic. Optimisers must not assume a pure result.
 - Jev Choice accepts at most 255 labels. This package additionally requires at

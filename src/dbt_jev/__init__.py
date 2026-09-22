@@ -5,6 +5,7 @@ from .runtime import (
     JevError,
     RuntimeConfig,
     classify,
+    decisions,
     match_probability,
     score,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "JevError",
     "RuntimeConfig",
     "classify",
+    "decisions",
     "match_probability",
     "score",
 ]

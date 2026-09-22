@@ -18,6 +18,7 @@ duckdb = [
   "dbt-duckdb==1.11.0",
   "duckdb==1.5.5",
   "numpy>=1.26",
+  "pyarrow>=14",
 ]
 clickhouse = [
   "dbt-clickhouse==1.10.2",
@@ -28,6 +29,7 @@ test = [
   "dbt-duckdb==1.11.0",
   "duckdb==1.5.5",
   "numpy>=1.26",
+  "pyarrow>=14",
   "pytest==8.4.2",
 ]
 
