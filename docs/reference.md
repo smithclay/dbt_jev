@@ -67,6 +67,46 @@ probability-weighted expected score and can be fractional, from 0 through
 | DuckDB | `jev_score(cast(input_expr as varchar), levels_json, instructions)` |
 | ClickHouse | `jev_score(cast(input_expr as Nullable(String)), levels_json, instructions)` |
 
+### `decisions`
+
+```jinja
+dbt_jev.decisions(input_expr, questions)
+```
+
+`input_expr` is inserted as a SQL expression and cast to text. `questions` is a
+compile-time mapping of question id to spec. Each id must match
+`[A-Za-z_][A-Za-z0-9_]*`; at least one and at most 255 questions are allowed. A
+spec is a mapping with a `type` of `choice`, `noul`, or `score`:
+
+- `choice`: requires `choices` (a 2–255 label mapping, as in `classify`) and may
+  carry optional `instructions`;
+- `noul`: requires `instructions` and may carry optional true/false `criteria`;
+- `score`: requires `levels` (an ordered rubric) and `instructions`.
+
+All questions are evaluated against the one shared `input_expr` state in a single
+request, which Jev scores in parallel. The return type is nullable SQL text: a
+compact JSON object mapping each question id to its scalar answer, or SQL NULL for
+NULL input (no request is made). Answers are validated exactly as the single
+primitives are (out-of-set Choice labels, Noul values outside 0–1, and Scores
+outside the rubric all raise).
+
+| Adapter | SQL function |
+| --- | --- |
+| DuckDB | `jev_decisions(cast(input_expr as varchar), questions_json)` |
+| ClickHouse | `jev_decisions(cast(input_expr as Nullable(String)), questions_json)` |
+
+Read answers back with the accessors, which compile to native JSON extraction:
+
+```jinja
+dbt_jev.decision_label(decisions_expr, question_id)   -- text  (Choice label)
+dbt_jev.decision_value(decisions_expr, question_id)   -- double (Noul or Score)
+```
+
+| Adapter | `decision_label` | `decision_value` |
+| --- | --- | --- |
+| DuckDB | `json_extract_string(expr, '$.id')` | `cast(json_extract(expr, '$.id') as double)` |
+| ClickHouse | `JSONExtractString(expr, 'id')` | `JSONExtractFloat(expr, 'id')` |
+
 ## Jev request
 
 All SQL functions call the shared Python runtime. `classify` produces this
@@ -121,20 +161,27 @@ No transport or protocol error is mapped to a classification label.
 
 ## Backend execution
 
-DuckDB registers three scalar functions on every adapter connection through the
-`dbt-duckdb` Python plugin:
+DuckDB registers four vectorized (Arrow) scalar functions on every adapter
+connection through the `dbt-duckdb` Python plugin:
 
 - `jev_classify(VARCHAR, VARCHAR) -> VARCHAR`;
 - `jev_match_probability(VARCHAR, VARCHAR, VARCHAR, VARCHAR) -> DOUBLE`;
-- `jev_score(VARCHAR, VARCHAR, VARCHAR) -> DOUBLE`.
+- `jev_score(VARCHAR, VARCHAR, VARCHAR) -> DOUBLE`;
+- `jev_decisions(VARCHAR, VARCHAR) -> VARCHAR`.
 
-They use DuckDB's default NULL propagation and declare `side_effects=True`.
+They are registered with `type='arrow'`, `null_handling='special'`, and
+`side_effects=True`. Because DuckDB hands the whole data chunk to the UDF at once,
+the runtime de-duplicates identical inputs and evaluates the distinct ones with a
+bounded thread pool (`DBT_JEV_MAX_CONCURRENCY`), returning NULL for NULL input
+without a request. Provider clients and OpenRouter keep-alive connections are held
+per worker thread so requests can overlap safely.
 
 ClickHouse loads equivalent nullable functions from
-`install/clickhouse/dbt_jev_function.xml`: `jev_classify` returns
-`Nullable(String)`, while `jev_match_probability` and `jev_score` return
-`Nullable(Float64)`. The non-deterministic `executable_pool` functions send
-named arguments and results as `JSONEachRow` to long-lived Python workers. An
+`install/clickhouse/dbt_jev_function.xml`: `jev_classify` and `jev_decisions`
+return `Nullable(String)`, while `jev_match_probability` and `jev_score` return
+`Nullable(Float64)`. The non-deterministic `executable_pool` functions send named
+arguments and results as `JSONEachRow` to long-lived Python workers; `pool_size`
+(default 4) bounds how many requests the server issues concurrently. An
 incomplete NULL input returns JSON `null` before runtime configuration or
 credentials are loaded.
 

@@ -35,6 +35,25 @@ Priority order for the work: **concurrency (P0) → question-batching (P0/P1) �
 de-dup/cache (P1) → connection reuse + retry hygiene (P1) → token & call-volume
 reduction guidance (P2).**
 
+## Implementation status
+
+All **P0 and P1** findings below are now implemented on the runtime and both
+adapters:
+
+| Finding | Status | What shipped |
+| --- | --- | --- |
+| P0-1 concurrency | Done | Global lock removed; per-thread clients/connections; bounded `ThreadPoolExecutor` sized by `DBT_JEV_MAX_CONCURRENCY` (default 8); DuckDB converted to vectorized Arrow UDFs so a chunk fans out. |
+| P0-2 question-batching | Done | New `dbt_jev.decisions(input, questions)` macro + `jev_decisions` UDF send many typed questions against one state in one request; `decision_label` / `decision_value` accessors read answers back. |
+| P1-1 de-dup | Done (in-run) | Identical `(state, question)` inputs collapse to one request within a batch. Durable cross-run cache remains out of scope (materialise as a table). |
+| P1-2 connection reuse | Done | OpenRouter route uses a per-thread keep-alive `http.client` connection instead of a new socket per row. |
+| P1-3 retry hygiene | Done | Jittered backoff (`DBT_JEV_BACKOFF_JITTER`), `Retry-After` honored on 429/503, and sleeps no longer run under a shared lock. |
+| P1-4 ClickHouse concurrency | Done | `pool_size` raised to a configurable default of 4 (bounds server-side request concurrency) + `jev_decisions` added. Intra-worker block fan-out (needs `send_chunk_header`) is left as a follow-up. |
+
+P2 items (Arrow UDFs — delivered early as the vehicle for P0-1; SQL pre-filter /
+narrow-projection guidance; durable cache) are documented but only partially
+implemented. The findings below are retained as written for the rationale and
+evidence.
+
 ---
 
 ## 1. What Jev charges for (the economics that drive this audit)

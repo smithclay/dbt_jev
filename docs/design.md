@@ -48,8 +48,10 @@ can change behaviour; set
 ## Why these backend mechanisms
 
 `dbt-duckdb` documents a Python plugin hook that receives every DuckDB connection
-and can register Python scalar functions. It keeps the official Jev client in the
-dbt runner process and requires no compiled extension.
+and can register Python scalar functions. The functions are registered as
+vectorized Arrow UDFs so DuckDB hands over a whole chunk at once, which is where
+the runtime de-duplicates and fans out concurrent requests. It keeps the official
+Jev client in the dbt runner process and requires no compiled extension.
 
 ClickHouse's documented executable-UDF mechanism streams blocks to an external
 program over standard input/output. An `executable_pool` retains Python processes
@@ -93,9 +95,23 @@ dbt dispatch search order is insufficient because the macro signatures differ, a
 replacing the existing adapter macro would bypass its safety gates. This package
 does not add that integration.
 
+## Throughput mechanisms
+
+The runtime is built for the two ways Jev work scales. For **many rows** it
+evaluates a data chunk with bounded concurrency (`DBT_JEV_MAX_CONCURRENCY` on
+DuckDB via vectorized Arrow UDFs; `pool_size` on ClickHouse) and de-duplicates
+identical `(state, question)` inputs to one request within a run. For **many
+questions about one row** it exposes `decisions`, which sends all of them in a
+single request that Jev scores in parallel — near the cost and latency of one
+question rather than N. The OpenRouter route reuses a per-thread keep-alive
+connection, and retries use jittered, `Retry-After`-aware backoff so concurrent
+workers do not synchronise into a rate-limit storm.
+
 ## Deliberate exclusions
 
-There is no provider framework, service, durable inference cache, evaluation
-framework, or automatic batching. Scalar network calls are expensive and may be
-repeated by SQL re-evaluation or retries. The example therefore uses ordinary table
-materialisation so downstream queries do not invoke Jev again.
+There is no provider framework, service, durable cross-run inference cache, or
+evaluation framework. Jev exposes no multi-state batch endpoint, so different
+rows are scaled with concurrency rather than packed into one request. Scalar
+network calls may still be repeated by SQL re-evaluation or retries, so the
+examples use ordinary table materialisation and (where a cheap SQL rule can
+decide a row) pre-filtering so downstream queries do not invoke Jev again.

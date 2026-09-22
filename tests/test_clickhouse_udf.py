@@ -99,6 +99,34 @@ def test_json_each_row_dispatches_match_and_score(monkeypatch):
     ]
 
 
+def test_json_each_row_dispatches_decisions(monkeypatch):
+    calls = []
+
+    def fake_decisions(state, questions):
+        calls.append((state, questions))
+        return None if state is None else '{"failure_type":"expected"}'
+
+    monkeypatch.setattr(clickhouse_udf, "decisions", fake_decisions)
+    questions = json.dumps(
+        {"failure_type": {"type": "choice", "choices": {"expected": "d", "other": "e"}}}
+    )
+    stdin = io.StringIO(
+        "".join(
+            json.dumps({"input": state, "questions": questions}) + "\n"
+            for state in ["No file found", None]
+        )
+    )
+    stdout = io.StringIO()
+
+    clickhouse_udf.serve(stdin, stdout)
+
+    assert [json.loads(line) for line in stdout.getvalue().splitlines()] == [
+        {"result": '{"failure_type":"expected"}'},
+        {"result": None},
+    ]
+    assert calls == [("No file found", questions), (None, questions)]
+
+
 @pytest.mark.parametrize(
     "row",
     [
@@ -108,6 +136,8 @@ def test_json_each_row_dispatches_match_and_score(monkeypatch):
         {"input": 3, "choices": "{}"},
         {"left": "a", "right": "b"},
         {"input": "value", "levels": "[]"},
+        {"questions": "{}"},
+        {"input": 3, "questions": "{}"},
     ],
 )
 def test_malformed_rows_raise_safe_errors(row):

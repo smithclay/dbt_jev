@@ -1,4 +1,13 @@
 <functions>
+    <!--
+        pool_size sets how many worker processes ClickHouse keeps per function,
+        and therefore how many Jev requests this server can have in flight at
+        once (ClickHouse hands concurrent execution threads a worker each). Raise
+        it for more throughput on large tables, but keep the total across all
+        functions and servers within the Jev account's rate limit
+        (early access: ~1,200 requests/minute, ~250,000 tokens/second). Restart
+        ClickHouse after changing it.
+    -->
     <function>
         <type>executable_pool</type>
         <name>jev_classify</name>
@@ -15,7 +24,7 @@
         <format>JSONEachRow</format>
         <command>dbt_jev_clickhouse_udf</command>
         <execute_direct>true</execute_direct>
-        <pool_size>1</pool_size>
+        <pool_size>4</pool_size>
         <max_command_execution_time>35</max_command_execution_time>
         <command_read_timeout>35000</command_read_timeout>
         <command_write_timeout>35000</command_write_timeout>
@@ -48,7 +57,7 @@
         <format>JSONEachRow</format>
         <command>dbt_jev_clickhouse_udf</command>
         <execute_direct>true</execute_direct>
-        <pool_size>1</pool_size>
+        <pool_size>4</pool_size>
         <max_command_execution_time>35</max_command_execution_time>
         <command_read_timeout>35000</command_read_timeout>
         <command_write_timeout>35000</command_write_timeout>
@@ -77,7 +86,32 @@
         <format>JSONEachRow</format>
         <command>dbt_jev_clickhouse_udf</command>
         <execute_direct>true</execute_direct>
-        <pool_size>1</pool_size>
+        <pool_size>4</pool_size>
+        <max_command_execution_time>35</max_command_execution_time>
+        <command_read_timeout>35000</command_read_timeout>
+        <command_write_timeout>35000</command_write_timeout>
+        <command_termination_timeout>5</command_termination_timeout>
+        <deterministic>false</deterministic>
+        <check_exit_code>true</check_exit_code>
+        <stderr_reaction>log_last</stderr_reaction>
+    </function>
+    <function>
+        <type>executable_pool</type>
+        <name>jev_decisions</name>
+        <return_type>Nullable(String)</return_type>
+        <return_name>result</return_name>
+        <argument>
+            <type>Nullable(String)</type>
+            <name>input</name>
+        </argument>
+        <argument>
+            <type>String</type>
+            <name>questions</name>
+        </argument>
+        <format>JSONEachRow</format>
+        <command>dbt_jev_clickhouse_udf</command>
+        <execute_direct>true</execute_direct>
+        <pool_size>4</pool_size>
         <max_command_execution_time>35</max_command_execution_time>
         <command_read_timeout>35000</command_read_timeout>
         <command_write_timeout>35000</command_write_timeout>
