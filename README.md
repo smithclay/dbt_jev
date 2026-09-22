@@ -132,18 +132,28 @@ not support DuckDB or ClickHouse.
 
 These steps run on the dbt runner.
 
-1. Install the runtime and DuckDB adapter in the same Python environment as dbt:
+1. Install the runtime and DuckDB adapter in the same Python environment as dbt.
+   The runtime is not on PyPI; install it from this repository at the tag you
+   intend to use:
 
    ```bash
-   python -m pip install -e '/path/to/dbt_jev[duckdb]'
+   python -m pip install \
+     'dbt-jev-runtime[duckdb] @ git+https://github.com/smithclay/dbt_jev.git@v0.1.0'
    ```
 
-2. Add this standalone package to the consuming project's `packages.yml`:
+   From a clone, `python -m pip install -e '/path/to/dbt_jev[duckdb]'` does the
+   same thing.
+
+2. Add the macro package to the consuming project's `packages.yml`:
 
    ```yaml
    packages:
-     - local: ../dbt_jev
+     - package: smithclay/dbt_jev
+       version: 0.1.0
    ```
+
+   From a clone, use `- local: ../dbt_jev` instead. Keep the macro package and
+   the runtime on the same version.
 
 3. Register the plugin in the DuckDB output in `profiles.yml`:
 
@@ -187,13 +197,16 @@ On the dbt runner:
    python -m pip install 'dbt-core==1.11.12' 'dbt-clickhouse==1.10.2'
    ```
 
-2. Add the local package entry shown above and run `dbt deps`.
+2. Add the `packages.yml` entry shown above and run `dbt deps`.
 
 On every ClickHouse server that can execute the function:
 
-1. Install Python 3.10 or newer and install the runtime into that interpreter:
+1. Install Python 3.10 or newer and install the runtime into that interpreter.
+   The server also needs the two files under `install/clickhouse/`, so clone this
+   repository at the tag rather than installing from a URL:
 
    ```bash
+   git clone --branch v0.1.0 https://github.com/smithclay/dbt_jev.git
    sudo python3 -m pip install /path/to/dbt_jev
    ```
 
